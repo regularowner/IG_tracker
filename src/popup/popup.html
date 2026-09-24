@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstaTracker Pro</title>
+    <link rel="stylesheet" href="popup.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="glass-bg"></div>
+    <div class="container">
+        
+        <!-- Header & Çoklu Hesap Değiştirici -->
+        <header>
+            <div class="header-top">
+                <div class="logo">
+                    <div class="logo-icon"></div>
+                    <h1>InstaTracker <span>PRO</span></h1>
+                </div>
+            </div>
+            <div class="account-selector-wrapper">
+                <span class="account-badge-icon">👤</span>
+                <select id="account-select" class="account-dropdown">
+                    <option value="">Profil Aranıyor...</option>
+                </select>
+            </div>
+        </header>
+
+        <!-- Otomatik Takip Durum & Ayar Kartı -->
+        <section class="auto-track-card">
+            <div class="auto-track-header">
+                <div class="auto-track-info">
+                    <span class="auto-track-title">🤖 Arka Planda Otomatik Takip</span>
+                    <span class="auto-track-status" id="auto-status-badge">🟢 Aktif</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="auto-sync-toggle" checked>
+                    <span class="slider round"></span>
+                </label>
+            </div>
+            <div class="auto-track-settings" id="auto-settings-panel">
+                <span class="setting-label">Kontrol Sıklığı:</span>
+                <select id="auto-interval-select" class="custom-select">
+                    <option value="15">Her 15 Dakikada Bir</option>
+                    <option value="30" selected>Her 30 Dakikada Bir</option>
+                    <option value="60">Her 1 Saatte Bir</option>
+                    <option value="120">Her 2 Saatte Bir</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Manuel Hızlı Analiz Butonu -->
+        <section class="controls-card">
+            <button id="start-full-analysis" class="btn primary-gradient main-action-btn">
+                <span class="btn-icon">⚡</span> Şimdi Manuel Analiz Yap
+            </button>
+            <div class="status-wrapper">
+                <p id="status-text">Durum: Hazır</p>
+                <div class="progress-bar-container"><div class="progress-bar" id="progress-bar"></div></div>
+            </div>
+        </section>
+
+        <!-- Arama Alanı -->
+        <div class="search-box-wrapper">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="search-input" placeholder="Listede kullanıcı ara...">
+        </div>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-target="tab-not-following-back">
+                Nankörler <span class="tab-badge" id="tab-nfb-count">0</span>
+            </button>
+            <button class="tab-btn" data-target="tab-lost-followers">
+                Kaçanlar <span class="tab-badge danger" id="tab-lf-count">0</span>
+            </button>
+            <button class="tab-btn" data-target="tab-history">
+                Kayıtlar <span class="tab-badge" id="tab-history-count">0</span>
+            </button>
+        </nav>
+
+        <main class="tab-content">
+            <!-- Nankörler Tab -->
+            <div id="tab-not-following-back" class="tab-pane active fade-in">
+                <div class="list-header">
+                    <h3>Geri Takip Etmeyenler <span class="badge" id="nfb-count">0</span></h3>
+                    <div class="filters">
+                        <button class="filter-btn active" data-filter="all">Tümü</button>
+                        <button class="filter-btn" data-filter="public">Açık</button>
+                        <button class="filter-btn" data-filter="private">🔒 Gizli</button>
+                    </div>
+                </div>
+
+                <!-- Toplu Güvenli Takipten Çıkma Araç Çubuğu -->
+                <div class="batch-unfollow-bar">
+                    <span class="batch-info">🛡️ Güvenli Takipten Çık:</span>
+                    <button id="batch-unfollow-5" class="btn-batch">5 Kişi</button>
+                    <button id="batch-unfollow-10" class="btn-batch">10 Kişi</button>
+                </div>
+                
+                <ul id="list-nfb" class="user-list">
+                    <li class="empty-state">Henüz analiz yapılmadı veya herkes sizi takip ediyor.</li>
+                </ul>
+            </div>
+
+            <!-- Kaybedilenler (Kaçanlar) Tab -->
+            <div id="tab-lost-followers" class="tab-pane fade-in">
+                <div class="list-header">
+                    <div>
+                        <h3>Sizi Takipten Çıkanlar <span class="badge danger-badge" id="lf-count">0</span></h3>
+                        <p class="helper-text">Arka planda yakalanan takibi bırakanlar.</p>
+                    </div>
+                </div>
+                <ul id="list-lf" class="user-list">
+                    <li class="empty-state">Henüz kimse sizi takipten çıkmamış! 🎉</li>
+                </ul>
+            </div>
+
+            <!-- Geçmiş Veriler (History) -->
+            <div id="tab-history" class="tab-pane fade-in">
+                <div class="list-header">
+                    <h3>Otonom Analiz Geçmişi</h3>
+                    <span class="helper-text">Otomatik ve manuel tüm taramalar</span>
+                </div>
+                <ul id="list-history" class="history-list">
+                    <li class="empty-state">Henüz bir analiz kaydı yok.</li>
+                </ul>
+            </div>
+        </main>
+        
+        <footer>
+            <button id="clear-data" class="text-btn danger"><span class="btn-icon">🗑️</span> Bu Profilin Verilerini Sıfırla</button>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
