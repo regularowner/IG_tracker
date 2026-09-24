@@ -92,18 +92,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    const normalizeAcc = (acc) => String(acc || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+
     // --- Çoklu Hesap Yönetimi (Account Switcher) ---
     function populateAccountDropdown(preferredAccount) {
         chrome.storage.local.get(null, (all) => {
             const keys = Object.keys(all).filter(k => k.endsWith('_followerData'));
-            let accounts = keys.map(k => k.replace('_followerData', ''));
+            let accounts = Array.from(new Set(keys.map(k => normalizeAcc(k.replace('_followerData', ''))))).filter(Boolean);
             
-            accountSelect.innerHTML = '';
-            
-            if (preferredAccount && !accounts.includes(preferredAccount)) {
-                accounts.unshift(preferredAccount);
+            const cleanPref = normalizeAcc(preferredAccount);
+            if (cleanPref && !accounts.includes(cleanPref)) {
+                accounts.unshift(cleanPref);
             }
 
+            accountSelect.innerHTML = '';
+            
             if (accounts.length === 0) {
                 const opt = document.createElement('option');
                 opt.value = '';
@@ -116,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const opt = document.createElement('option');
                 opt.value = acc;
                 opt.innerText = `@${acc}`;
-                if (acc === (preferredAccount || activeAccount)) {
+                if (acc === (cleanPref || activeAccount)) {
                     opt.selected = true;
                     activeAccount = acc;
                 }
@@ -130,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     accountSelect.addEventListener('change', (e) => {
-        const chosen = e.target.value;
+        const chosen = normalizeAcc(e.target.value);
         if (chosen) {
             activeAccount = chosen;
             btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
@@ -162,18 +165,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             if (detected) {
-                activeAccount = detected;
+                activeAccount = normalizeAcc(detected);
                 populateAccountDropdown(activeAccount);
                 btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
                 statusText.innerText = `Aktif Sekme: @${activeAccount}`;
                 statusText.style.color = "var(--success)";
-                if (notifyUser) alert(`@${detected} profili başarıyla seçildi.`);
+                if (notifyUser) alert(`@${activeAccount} profili başarıyla seçildi.`);
                 updateUI();
             } else {
                 chrome.storage.local.get(null, (all) => {
                     const keys = Object.keys(all).filter(k => k.endsWith('_followerData'));
                     if (keys.length > 0) {
-                        activeAccount = keys[0].replace('_followerData', '');
+                        activeAccount = normalizeAcc(keys[0].replace('_followerData', ''));
                         populateAccountDropdown(activeAccount);
                         btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
                         statusText.innerText = `Kayıtlı Profil: @${activeAccount}`;
@@ -430,7 +433,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateUI() {
-        if (!activeAccount) {
+        const normAcc = normalizeAcc(activeAccount);
+        if (!normAcc) {
             statFollowers.innerText = '0';
             statFollowing.innerText = '0';
             statNotFollowing.innerText = '0';
@@ -440,15 +444,17 @@ document.addEventListener('DOMContentLoaded', () => {
             tabCountLF.innerText = '0';
             renderUserList(listNFB, [], "Lütfen bir profil seçin.");
             renderUserList(listLF, [], "Lütfen bir profil seçin.");
+            renderHistoryList(listHistory, [], "Lütfen bir profil seçin.");
             return;
         }
 
-        const kF = `${activeAccount}_followerData`;
-        const kFl = `${activeAccount}_followingData`;
-        const kNfb = `${activeAccount}_notFollowingBack`;
-        const kH = `${activeAccount}_history`;
-        const kLFList = `${activeAccount}_cumulativeLostFollowers`;
-        const kLast = `${activeAccount}_lastAnalyzed`;
+        activeAccount = normAcc;
+        const kF = `${normAcc}_followerData`;
+        const kFl = `${normAcc}_followingData`;
+        const kNfb = `${normAcc}_notFollowingBack`;
+        const kH = `${normAcc}_history`;
+        const kLFList = `${normAcc}_cumulativeLostFollowers`;
+        const kLast = `${normAcc}_lastAnalyzed`;
 
         chrome.storage.local.get([kF, kFl, kNfb, kH, kLFList, kLast], (data) => {
             const followers = data[kF] || [];
@@ -463,11 +469,15 @@ document.addEventListener('DOMContentLoaded', () => {
             renderLostList();
 
             currentHistoryData = data[kH] || [];
-            renderHistoryList(listHistory, currentHistoryData, "Henüz geçmiş kayıt yok. Otomatik veya manuel analiz bekleniyor.");
+            renderHistoryList(listHistory, currentHistoryData, "Henüz geçmiş kayıt yok. 'Analizi Başlat' butonuna tıklayın.");
 
             if (data[kLast]) {
                 const lDate = new Date(data[kLast]).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-                statusText.innerText = `Son Tarama: ${lDate} (@${activeAccount})`;
+                statusText.innerText = `Son Tarama: ${lDate} (@${normAcc})`;
+                statusText.style.color = "var(--text-muted)";
+            } else {
+                statusText.innerText = `Bu hesap henüz taranmadı (@${normAcc})`;
+                statusText.style.color = "var(--text-muted)";
             }
         });
     }

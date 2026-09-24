@@ -1,68 +1,51 @@
-// Background Service Worker for InstaTracker
+// Background Service Worker for InstaTracker (Tam Hesap İzolasyonlu)
 
 const ALARM_NAME = "insta_tracker_auto_sync";
 
+const normalizeAcc = (acc) => String(acc || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log("InstaTracker Multi-Account installed.");
-  setupAlarm(30); // Varsayılan 30 dakikada bir kontrol
+  setupAlarm(30);
 });
 
-// Alarm Yapılandırması
 function setupAlarm(intervalInMinutes) {
   chrome.alarms.clear(ALARM_NAME, () => {
     if (intervalInMinutes && intervalInMinutes > 0) {
       chrome.alarms.create(ALARM_NAME, {
         periodInMinutes: intervalInMinutes
       });
-      console.log(`[InstaTracker] Otomatik alarm kuruldu: her ${intervalInMinutes} dakikada bir.`);
     }
   });
 }
 
-// Alarm Tetiklenince Çalışacak Mantık
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     triggerBackgroundSync();
   }
 });
 
-// Arka Planda Otomatik Senkronizasyon Tetikleyici
 function triggerBackgroundSync() {
-  chrome.storage.local.get(["autoSyncEnabled", "monitoredAccounts"], (settings) => {
-    // Varsayılan olarak açık kabul edelim
+  chrome.storage.local.get(["autoSyncEnabled"], (settings) => {
     const isEnabled = settings.autoSyncEnabled !== false;
-    if (!isEnabled) {
-      console.log("[InstaTracker] Otomatik takip kapalı.");
-      return;
-    }
+    if (!isEnabled) return;
 
-    // Açık olan Instagram sekmelerini bul
     chrome.tabs.query({ url: "*://*.instagram.com/*" }, (tabs) => {
-      if (tabs.length === 0) {
-        console.log("[InstaTracker] Açık Instagram sekmesi bulunamadı, bekleniyor.");
-        return;
-      }
-
-      // İlk Instagram sekmesini kullanarak işlemi yap
+      if (tabs.length === 0) return;
       const activeTab = tabs[0];
       
-      // Kayıtlı izlenen hesapları al veya aktif hesabı tara
       chrome.storage.local.get(null, (allData) => {
         const followerKeys = Object.keys(allData).filter(k => k.endsWith('_followerData'));
         const accountsToSync = followerKeys.map(k => k.replace('_followerData', ''));
 
-        if (accountsToSync.length === 0) {
-          // Henüz kayıtlı hesap yoksa o an açık olan profili tara
-          chrome.tabs.sendMessage(activeTab.id, { action: "autoSyncCurrentProfile" }).catch(() => {});
-        } else {
-          // Kayıtlı hesapları sırayla sessizce tara
+        if (accountsToSync.length > 0) {
           accountsToSync.forEach((account, idx) => {
             setTimeout(() => {
               chrome.tabs.sendMessage(activeTab.id, { 
                 action: "startSilentSync", 
                 username: account 
               }).catch(() => {});
-            }, idx * 45000); // Hesaplar arası 45 sn dinlenme
+            }, idx * 45000);
           });
         }
       });
@@ -89,15 +72,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "saveData") {
-    const { sourceAccount, type, data } = request.payload;
-    if (!sourceAccount) return;
+    const rawAccount = request.payload.sourceAccount;
+    const account = normalizeAcc(rawAccount);
+    const { type, data } = request.payload;
+    if (!account) return;
 
     if (type === "followers") {
-      chrome.storage.local.set({ [`${sourceAccount}_currentFollowers`]: data }, () => {
+      chrome.storage.local.set({ [`${account}_currentFollowers`]: data }, () => {
         sendResponse({ success: true, message: "Followers saved." });
       });
     } else if (type === "following") {
-      chrome.storage.local.set({ [`${sourceAccount}_currentFollowing`]: data }, () => {
+      chrome.storage.local.set({ [`${account}_currentFollowing`]: data }, () => {
         sendResponse({ success: true, message: "Following saved." });
       });
     }
@@ -105,22 +90,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === "processDiff") {
-    const account = request.sourceAccount;
+    const account = normalizeAcc(request.sourceAccount);
     const isSilent = !!request.isSilent;
     if (!account) return;
     
     processAndStoreDiff(account, isSilent, sendResponse);
     return true;
   }
-
-  if (request.action === "triggerSyncNow") {
-    triggerBackgroundSync();
-    sendResponse({ success: true });
-    return true;
-  }
 });
 
-// Bildirim Gönderici
 function sendNotification(title, message) {
   chrome.notifications.create({
     type: "basic",
@@ -131,14 +109,15 @@ function sendNotification(title, message) {
   });
 }
 
-// Farkları Hesaplama, Geçmiş Kaydı ve Bildirim
+// Farkları Hesaplama, Hesap Çakışma Koruması ve Geçmiş Kaydı
 function processAndStoreDiff(account, isSilent, sendResponse) {
-  const kCF = `${account}_currentFollowers`;
-  const kCFl = `${account}_currentFollowing`;
-  const kF = `${account}_followerData`;
-  const kFl = `${account}_followingData`;
-  const kH = `${account}_history`;
-  const kLFList = `${account}_cumulativeLostFollowers`;
+  const normAccount = normalizeAcc(account);
+  const kCF = `${normAccount}_currentFollowers`;
+  const kCFl = `${normAccount}_currentFollowing`;
+  const kF = `${normAccount}_followerData`;
+  const kFl = `${normAccount}_followingData`;
+  const kH = `${normAccount}_history`;
+  const kLFList = `${normAccount}_cumulativeLostFollowers`;
 
   chrome.storage.local.get([kCF, kCFl, kF, kFl, kH, kLFList], (result) => {
     const currentFollowers = result[kCF] || [];
@@ -147,6 +126,16 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
     const oldFollowing = result[kFl] || [];
     const history = result[kH] || [];
     let cumulativeLost = result[kLFList] || [];
+
+    // GÜVENLİK KORUMASI: Eğer yeni çekilen veri boş ise ama eski takipçiler varsa,
+    // bu bir API çekim hatasıdır; eski takipçileri "takipten çıkmış" sanıp çakışma yaratma!
+    if (currentFollowers.length === 0 && oldFollowers.length > 0) {
+      console.warn(`[InstaTracker] @${normAccount} için çekilen takipçi verisi boş geldi. Eski veriler korundu.`);
+      if (typeof sendResponse === 'function') {
+        sendResponse({ success: false, error: "empty_current_data_guarded" });
+      }
+      return;
+    }
 
     const now = new Date();
     const dateStr = now.toISOString();
@@ -164,9 +153,9 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
       user => !currentFollowers.some(f => isSameUser(f, user))
     );
     
-    // 2. Bu analizdeki YENİ takipten çıkanlar
+    // 2. Bu analizdeki YENİ takipten çıkanlar (Sadece eski veri varsa ve yeni veri geçerliyse)
     let newLostInThisRun = [];
-    if (oldFollowers.length > 0) {
+    if (oldFollowers.length > 0 && currentFollowers.length > 0) {
       newLostInThisRun = oldFollowers.filter(
         oldUser => !currentFollowers.some(currentUser => isSameUser(currentUser, oldUser))
       );
@@ -174,13 +163,13 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
 
     // 3. Bu analizdeki YENİ takipçiler
     let newFollowersInThisRun = [];
-    if (oldFollowers.length > 0) {
+    if (oldFollowers.length > 0 && currentFollowers.length > 0) {
       newFollowersInThisRun = currentFollowers.filter(
         currentUser => !oldFollowers.some(oldUser => isSameUser(oldUser, currentUser))
       );
     }
 
-    // 4. Kümülatif takipten çıkanlar listesini güncelle
+    // 4. Kümülatif takipten çıkanlar listesini güncelle (Yalnızca bu hesaba ait)
     newLostInThisRun.forEach(lostUser => {
       const alreadyInList = cumulativeLost.some(u => isSameUser(u, lostUser));
       if (!alreadyInList) {
@@ -201,7 +190,7 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
       const names = newLostInThisRun.map(u => `@${u.username}`).slice(0, 3).join(', ');
       const moreText = newLostInThisRun.length > 3 ? ` ve ${newLostInThisRun.length - 3} kişi daha` : '';
       sendNotification(
-        `⚠️ Takipten Çıkan Var! (@${account})`, 
+        `⚠️ Takipten Çıkan Var! (@${normAccount})`, 
         `${names}${moreText} sizi takipten çıktı.`
       );
     }
@@ -210,7 +199,7 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
       const names = newFollowersInThisRun.map(u => `@${u.username}`).slice(0, 3).join(', ');
       const moreText = newFollowersInThisRun.length > 3 ? ` ve ${newFollowersInThisRun.length - 3} kişi daha` : '';
       sendNotification(
-        `🚀 Yeni Takipçi! (@${account})`, 
+        `🚀 Yeni Takipçi! (@${normAccount})`, 
         `${names}${moreText} sizi takip etmeye başladı.`
       );
     }
@@ -231,14 +220,14 @@ function processAndStoreDiff(account, isSilent, sendResponse) {
 
     history.push(newHistoryEntry);
 
-    // 7. Depola
+    // 7. Sadece bu hesaba ait anahtarları depola
     chrome.storage.local.set({
-      [`${account}_followerData`]: currentFollowers,
-      [`${account}_followingData`]: currentFollowing,
-      [`${account}_notFollowingBack`]: notFollowingBack,
-      [`${account}_cumulativeLostFollowers`]: cumulativeLost,
-      [`${account}_history`]: history,
-      [`${account}_lastAnalyzed`]: dateStr
+      [`${normAccount}_followerData`]: currentFollowers,
+      [`${normAccount}_followingData`]: currentFollowing,
+      [`${normAccount}_notFollowingBack`]: notFollowingBack,
+      [`${normAccount}_cumulativeLostFollowers`]: cumulativeLost,
+      [`${normAccount}_history`]: history,
+      [`${normAccount}_lastAnalyzed`]: dateStr
     }, () => {
       if (typeof sendResponse === 'function') {
         sendResponse({ 

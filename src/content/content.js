@@ -35,10 +35,12 @@ function showToast(message, isError = false) {
     }, 4500);
 }
 
+const normalizeAcc = (acc) => String(acc || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+
 // Aktif profili URL'den algıla
 function detectCurrentUsername() {
     const parts = window.location.pathname.split('/').filter(p => p && p !== 'explore' && p !== 'reels' && p !== 'direct' && p !== 'stories' && p !== 'p');
-    if (parts.length > 0) return parts[0];
+    if (parts.length > 0) return normalizeAcc(parts[0]);
     return null;
 }
 
@@ -222,7 +224,8 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
 
 // API ile Takipçi ve Takip Edilen Listesi Çekme (REST + GraphQL)
 async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
-    const username = forceUsername || detectCurrentUsername();
+    const rawUsername = forceUsername || detectCurrentUsername();
+    const username = normalizeAcc(rawUsername);
     
     if (!username) {
         if (!isSilent) showToast("Lütfen taranacak bir hesap seçin veya profil açın.", true);
@@ -371,7 +374,8 @@ async function fetchWithGraphQL(userId, type, csrfToken) {
 }
 
 // Tam Senkronizasyon Akışı
-async function executeFullSync(username, isSilent = false) {
+async function executeFullSync(rawUsername, isSilent = false) {
+    const username = normalizeAcc(rawUsername);
     if (window.isSyncingInProgress) return;
     window.isSyncingInProgress = true;
 
