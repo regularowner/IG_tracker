@@ -8,6 +8,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const accountSelect = document.getElementById('account-select');
     const searchInput = document.getElementById('search-input');
 
+    // İstatistik Sayı Alanları
+    const statFollowers = document.getElementById('stat-followers');
+    const statFollowing = document.getElementById('stat-following');
+    const statNotFollowing = document.getElementById('stat-not-following');
+
     // Toplu Takipten Çıkma
     const btnBatch5 = document.getElementById('batch-unfollow-5');
     const btnBatch10 = document.getElementById('batch-unfollow-10');
@@ -101,7 +106,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Seçilen hesabı en başa veya listeye dahil et
             if (selectedAccount && !accounts.includes(selectedAccount)) {
                 accounts.unshift(selectedAccount);
             }
@@ -198,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLostList();
     });
 
-    // --- Tekil Takipten Çıkma (Unfollow) Tetikleyicisi ---
+    // Tekil Takipten Çıkma (Unfollow)
     function handleUnfollowClick(btn, user) {
         if (!confirm(`@${user.username} kişisini takipten çıkmak istediğinize emin misiniz?`)) return;
 
@@ -218,15 +222,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         btn.className = "unfollow-btn done";
                         btn.innerText = "✓ Çıkarıldı";
 
-                        // Listeden ve depodan kaldır
                         if (activeAccount) {
                             currentNfbData = currentNfbData.filter(u => u.username.toLowerCase() !== user.username.toLowerCase());
                             chrome.storage.local.set({ [`${activeAccount}_notFollowingBack`]: currentNfbData });
                             countNFB.innerText = currentNfbData.length;
                             tabCountNFB.innerText = currentNfbData.length;
+                            statNotFollowing.innerText = currentNfbData.length;
                         }
 
-                        // Kartı yumuşakça gizle
                         const card = btn.closest('.user-item');
                         if (card) {
                             setTimeout(() => {
@@ -311,7 +314,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
 
-            // Unfollow Butonu Dinleyicisi
             const unfollowBtn = li.querySelector('.unfollow-btn');
             unfollowBtn.addEventListener('click', () => handleUnfollowClick(unfollowBtn, user));
 
@@ -336,6 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         countNFB.innerText = filtered.length;
         tabCountNFB.innerText = currentNfbData.length;
+        statNotFollowing.innerText = currentNfbData.length;
         renderUserList(listNFB, filtered, "Herkes sizi geri takip ediyor veya filtreye uygun sonuç yok! 🎉");
     }
 
@@ -406,12 +409,19 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateUI() {
         if (!activeAccount) return;
 
+        const kF = `${activeAccount}_followerData`;
+        const kFl = `${activeAccount}_followingData`;
         const kNfb = `${activeAccount}_notFollowingBack`;
         const kH = `${activeAccount}_history`;
         const kLFList = `${activeAccount}_cumulativeLostFollowers`;
         const kLast = `${activeAccount}_lastAnalyzed`;
 
-        chrome.storage.local.get([kNfb, kH, kLFList, kLast], (data) => {
+        chrome.storage.local.get([kF, kFl, kNfb, kH, kLFList, kLast], (data) => {
+            const followers = data[kF] || [];
+            const following = data[kFl] || [];
+            statFollowers.innerText = followers.length;
+            statFollowing.innerText = following.length;
+
             currentNfbData = data[kNfb] || [];
             renderNfbList();
 
@@ -428,7 +438,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Toplu Güvenli Takipten Çıkma Asistanı ---
+    // Toplu Güvenli Takipten Çıkma Asistanı
     function triggerBatchUnfollow(count) {
         if (!currentNfbData || currentNfbData.length === 0) {
             alert("Takipten çıkılacak kullanıcı bulunamadı.");

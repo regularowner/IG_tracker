@@ -1,4 +1,4 @@
-// Content script injected into instagram.com
+// Content script injected into instagram.com (Güçlendirilmiş Çoklu API Desteği)
 
 function showToast(message, isError = false) {
     let t = document.getElementById('insta-tracker-toast');
@@ -35,49 +35,85 @@ function showToast(message, isError = false) {
     }, 4500);
 }
 
+// Aktif profili URL veya Çerezden algıla
 function detectCurrentUsername() {
     const parts = window.location.pathname.split('/').filter(p => p && p !== 'explore' && p !== 'reels' && p !== 'direct' && p !== 'stories' && p !== 'p');
     if (parts.length > 0) return parts[0];
-    const match = document.cookie.match(/ds_user_id=([^;]+)/);
-    if (match) return match[1];
     return null;
 }
 
-const getCSRFToken = () => {
+// Güvenli CSRF Token Alıcı (Çoklu Yöntem)
+function getCSRFToken() {
+    // 1. Cookie
     const match = document.cookie.match(/csrftoken=([^;]+)/);
-    return match ? match[1] : '';
-};
+    if (match && match[1]) return match[1];
+
+    // 2. HTML Meta / Script tag araması
+    const html = document.documentElement.innerHTML;
+    let m = html.match(/"csrf_token":"([^"]+)"/);
+    if (m && m[1]) return m[1];
+    
+    m = html.match(/\\"csrf_token\\":\\"([^\\"]+)\\"/);
+    if (m && m[1]) return m[1];
+
+    m = html.match(/"token":"([^"]+)"/);
+    if (m && m[1]) return m[1];
+
+    return '';
+}
+
 const appId = "936619743392459";
 
-// Kullanıcı ID'si tespiti
-async function resolveUserId(username) {
+// Kullanıcı Sayısal ID'si ve Profil Detayı Çözücü
+async function resolveProfileInfo(username) {
     let userId = null;
+    let stats = { followers: 0, following: 0 };
+    const csrfToken = getCSRFToken();
+
+    // 1. Doğrudan web_profile_info API sorgusu
+    try {
+        const res = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+            headers: {
+                'x-ig-app-id': appId,
+                'x-csrftoken': csrfToken,
+                'x-asbd-id': '129477',
+                'x-requested-with': 'XMLHttpRequest',
+                'accept': '*/*'
+            }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data?.data?.user) {
+                userId = String(data.data.user.id);
+                stats.followers = data.data.user.edge_followed_by?.count || 0;
+                stats.following = data.data.user.edge_follow?.count || 0;
+                console.log(`[InstaTracker] web_profile_info başarılı. ID: ${userId}, Takipçi: ${stats.followers}, Takip: ${stats.following}`);
+                return { userId, stats };
+            }
+        }
+    } catch(e) {
+        console.warn("[InstaTracker] web_profile_info API hatası:", e);
+    }
+
+    // 2. HTML içi Regex Taraması
     const html = document.documentElement.innerHTML;
-    
     let match = html.match(/"profilePage_([0-9]+)"/);
     if (!match) match = html.match(/"user_id":"([0-9]+)"/);
     if (!match) match = html.match(/"target_id":"([0-9]+)"/);
-    if (match) userId = match[1];
-
-    if (!userId) {
-        try {
-            const csrfToken = getCSRFToken();
-            const res = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
-                headers: { 
-                    'x-ig-app-id': appId, 
-                    'x-csrftoken': csrfToken,
-                    'x-requested-with': 'XMLHttpRequest'
-                }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                userId = data?.data?.user?.id;
-            }
-        } catch(e) {
-            console.error("[InstaTracker] UserID çözme hatası:", e);
-        }
+    if (!match) match = html.match(/"id":"([0-9]+)"/);
+    
+    // Cookie'deki oturum sahibi kontrolü
+    if (!match && document.cookie.includes("ds_user_id=")) {
+        const dsMatch = document.cookie.match(/ds_user_id=([0-9]+)/);
+        if (dsMatch) match = dsMatch;
     }
-    return userId;
+
+    if (match) {
+        userId = match[1];
+        console.log(`[InstaTracker] HTML içi Regex ile ID bulundu: ${userId}`);
+    }
+
+    return { userId, stats };
 }
 
 // API ile Takipten Çıkma (Unfollow)
@@ -86,7 +122,8 @@ async function unfollowSingleUser(userId, username) {
     let targetId = userId;
     
     if (!targetId && username) {
-        targetId = await resolveUserId(username);
+        const info = await resolveProfileInfo(username);
+        targetId = info.userId;
     }
     
     if (!targetId) {
@@ -99,6 +136,7 @@ async function unfollowSingleUser(userId, username) {
             headers: {
                 'x-csrftoken': csrfToken,
                 'x-ig-app-id': appId,
+                'x-asbd-id': '129477',
                 'x-requested-with': 'XMLHttpRequest',
                 'content-type': 'application/x-www-form-urlencoded'
             }
@@ -106,9 +144,7 @@ async function unfollowSingleUser(userId, username) {
 
         if (res.ok) {
             const data = await res.json();
-            if (data.status === 'ok') {
-                return { success: true };
-            }
+            if (data.status === 'ok') return { success: true };
         } else if (res.status === 429) {
             return { success: false, error: "rate_limited" };
         }
@@ -119,7 +155,7 @@ async function unfollowSingleUser(userId, username) {
     }
 }
 
-// Toplu Güvenli Takipten Çıkma Asistanı (İnsansı gecikmeli)
+// Toplu Güvenli Takipten Çıkma Asistanı
 async function batchUnfollowUsers(usersList, sourceAccount) {
     if (window.isBatchUnfollowing) return { success: false, error: "already_running" };
     window.isBatchUnfollowing = true;
@@ -142,7 +178,6 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
         const res = await unfollowSingleUser(user.id, user.username);
         if (res.success) {
             countSuccess++;
-            // Yerel depodan sil
             if (sourceAccount) {
                 chrome.storage.local.get([`${sourceAccount}_notFollowingBack`, `${sourceAccount}_followingData`], (data) => {
                     let nfb = data[`${sourceAccount}_notFollowingBack`] || [];
@@ -156,19 +191,18 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
                 });
             }
         } else if (res.error === "rate_limited") {
-            showToast("Instagram limit uyguladı, işlem güvenlik amacıyla durduruldu.", true);
+            showToast("Instagram istek limiti uyguladı, işlem güvenlik amacıyla durduruldu.", true);
             break;
         }
 
-        // Güvenlik Gecikmesi: 4.5 - 7.5 saniye rastgele bekleme
         if (i < usersList.length - 1) {
-            const waitTime = Math.floor(Math.random() * 3000) + 4500;
+            const waitTime = Math.floor(Math.random() * 2500) + 4500; // 4.5 - 7 sn
             await new Promise(r => setTimeout(r, waitTime));
         }
     }
 
     window.isBatchUnfollowing = false;
-    showToast(`✅ Tamamlandı: ${countSuccess} kişi başarıyla takipten çıkıldı.`);
+    showToast(`✅ Tamamlandı: ${countSuccess} kişi takipten çıkıldı.`);
     chrome.runtime.sendMessage({
         action: "batchUnfollowComplete",
         count: countSuccess
@@ -177,7 +211,7 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
     return { success: true, count: countSuccess };
 }
 
-// API ile Takipçi/Takip Edilen Listesi Çekme
+// API ile Takipçi ve Takip Edilen Listesi Çekme (REST + GraphQL Hibrit)
 async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     const username = forceUsername || detectCurrentUsername();
     
@@ -187,10 +221,10 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     }
 
     const csrfToken = getCSRFToken();
-    const userId = await resolveUserId(username);
+    const { userId, stats } = await resolveProfileInfo(username);
 
     if (!userId) {
-        if (!isSilent) showToast("Profil ID'si alınamadı.", true);
+        if (!isSilent) showToast("Profil ID'si çözümlenemedi. Sayfayı yenileyip tekrar deneyin.", true);
         return { success: false, error: "user_id_not_found" };
     }
 
@@ -198,27 +232,40 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     let allUsers = [];
     let maxId = '';
     let hasNextPage = true;
+    let pageCount = 0;
 
-    while (hasNextPage) {
+    console.log(`[InstaTracker] ${type} listesi çekiliyor... Hedef: @${username} (ID: ${userId})`);
+
+    while (hasNextPage && pageCount < 50) { // Güvenlik sınırı: max 50 sayfa
+        pageCount++;
         try {
-            let url = `https://www.instagram.com/api/v1/friendships/${userId}/${endpoint}/?count=100`;
-            if (maxId) url += `&max_id=${maxId}`;
+            let url = `https://www.instagram.com/api/v1/friendships/${userId}/${endpoint}/?count=50`;
+            if (maxId) url += `&max_id=${encodeURIComponent(maxId)}`;
 
             const res = await fetch(url, {
                 headers: {
                     'x-csrftoken': csrfToken,
                     'x-ig-app-id': appId,
-                    'x-requested-with': 'XMLHttpRequest' 
+                    'x-asbd-id': '129477',
+                    'x-requested-with': 'XMLHttpRequest',
+                    'accept': '*/*'
                 }
             });
 
             if (!res.ok) {
                 if (res.status === 429) {
-                    if (!isSilent) showToast("İstek limiti, 8 sn bekleniyor...", true);
+                    if (!isSilent) showToast("İstek limiti uygulandı, 8 sn bekleniyor...", true);
                     await new Promise(r => setTimeout(r, 8000));
                     continue; 
                 }
-                throw new Error(`API Hatası: ${res.status}`);
+                
+                // REST API başarısızsa GraphQL ile dene
+                console.warn(`[InstaTracker] REST API ${res.status} döndü. GraphQL deneniyor...`);
+                const gqlUsers = await fetchWithGraphQL(userId, type, csrfToken);
+                if (gqlUsers && gqlUsers.length > 0) {
+                    allUsers = gqlUsers;
+                }
+                break;
             }
 
             const data = await res.json();
@@ -236,6 +283,8 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
                 });
             }
 
+            console.log(`[InstaTracker] Sayfa ${pageCount}: ${list.length} kişi alındı. Toplam: ${allUsers.length}`);
+
             if (!isSilent) {
                 chrome.runtime.sendMessage({
                     action: "scrapeProgress",
@@ -247,16 +296,18 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
 
             if (data.next_max_id) {
                 maxId = data.next_max_id;
-                await new Promise(r => setTimeout(r, Math.floor(Math.random() * 500) + 500));
+                await new Promise(r => setTimeout(r, Math.floor(Math.random() * 400) + 500));
             } else {
                 hasNextPage = false; 
             }
 
         } catch (err) {
-            console.error("[InstaTracker] Scraping durdu:", err);
+            console.error("[InstaTracker] Scraping döngü hatası:", err);
             break;
         }
     }
+
+    console.log(`[InstaTracker] ${type} tamamlandı. Toplam kullanıcı: ${allUsers.length}`);
 
     return new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -272,7 +323,48 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     });
 }
 
-// Tam Senkronizasyon
+// GraphQL Yedekleme Mekanizması
+async function fetchWithGraphQL(userId, type, csrfToken) {
+    const queryHash = type === 'followers' 
+        ? 'c76146de99bb02f6415203be841dd25a' 
+        : 'd04b0a864b4b54b886d0d461046757a0';
+    
+    let users = [];
+    try {
+        const variables = JSON.stringify({ id: userId, include_reel: false, fetch_mutual: false, first: 50 });
+        const url = `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(variables)}`;
+        
+        const res = await fetch(url, {
+            headers: {
+                'x-ig-app-id': appId,
+                'x-csrftoken': csrfToken,
+                'x-requested-with': 'XMLHttpRequest'
+            }
+        });
+        if (res.ok) {
+            const json = await res.json();
+            const edgeKey = type === 'followers' ? 'edge_followed_by' : 'edge_follow';
+            const edges = json?.data?.user?.[edgeKey]?.edges || [];
+            for (let e of edges) {
+                const node = e.node;
+                users.push({
+                    id: String(node.id),
+                    username: node.username,
+                    displayName: node.full_name || node.username,
+                    profilePicUrl: node.profile_pic_url || '',
+                    url: `https://instagram.com/${node.username}`,
+                    isPrivate: !!node.is_private,
+                    isVerified: !!node.is_verified
+                });
+            }
+        }
+    } catch(e) {
+        console.error("[InstaTracker] GraphQL fallback hatası:", e);
+    }
+    return users;
+}
+
+// Tam Senkronizasyon Akışı
 async function executeFullSync(username, isSilent = false) {
     if (window.isSyncingInProgress) return;
     window.isSyncingInProgress = true;
@@ -281,16 +373,16 @@ async function executeFullSync(username, isSilent = false) {
 
     try {
         if (!isSilent) chrome.runtime.sendMessage({ action: "analysisStep", step: "followers", text: "👥 Takipçiler çekiliyor..." }).catch(()=>{});
-        await scrapeListAPI('followers', isSilent, username);
+        const fRes = await scrapeListAPI('followers', isSilent, username);
         
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1200));
 
         if (!isSilent) chrome.runtime.sendMessage({ action: "analysisStep", step: "following", text: "➡️ Takip edilenler çekiliyor..." }).catch(()=>{});
-        await scrapeListAPI('following', isSilent, username);
+        const flRes = await scrapeListAPI('following', isSilent, username);
 
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 800));
 
-        if (!isSilent) chrome.runtime.sendMessage({ action: "analysisStep", step: "diff", text: "⚡ Değişiklikler hesaplanıyor..." }).catch(()=>{});
+        if (!isSilent) chrome.runtime.sendMessage({ action: "analysisStep", step: "diff", text: "⚡ Değişiklikler ve Kaçanlar hesaplanıyor..." }).catch(()=>{});
 
         return new Promise((resolve) => {
             chrome.runtime.sendMessage({ 
@@ -314,7 +406,7 @@ async function executeFullSync(username, isSilent = false) {
     }
 }
 
-// Mesaj dinleyici
+// Mesaj Dinleyicileri
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "startFullAnalysis") {
         executeFullSync(request.username, false).then(result => sendResponse({ success: true, result }));
@@ -341,7 +433,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-// Sayfadaki "Geri Takip Etmiyor" etiketini yerleştirme
+// Sayfadaki "Geri Takip Etmiyor" Rozeti
 let lastCheckedProfile = '';
 setInterval(() => {
     const parts = window.location.pathname.split('/').filter(p => p);

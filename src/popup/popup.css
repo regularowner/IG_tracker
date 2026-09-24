@@ -127,9 +127,39 @@ h1 span {
     cursor: pointer;
     max-width: 220px;
 }
-.account-dropdown option {
-    background: #0f172a;
+/* Anlık Profil İstatistikleri Özeti */
+.stats-overview-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+}
+
+.stat-box {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--card-border);
+    border-radius: 7px;
+    padding: 4px 6px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.stat-label {
+    font-size: 0.58rem;
+    color: var(--text-muted);
+}
+
+.stat-value {
+    font-size: 0.82rem;
+    font-weight: 700;
     color: #fff;
+}
+
+.stat-value.danger {
+    color: #ff6b6b;
 }
 
 /* Otomatik Takip Kartı */
