@@ -35,7 +35,7 @@ function showToast(message, isError = false) {
     }, 4500);
 }
 
-// Aktif profili URL veya Çerezden algıla
+// Aktif profili URL'den algıla
 function detectCurrentUsername() {
     const parts = window.location.pathname.split('/').filter(p => p && p !== 'explore' && p !== 'reels' && p !== 'direct' && p !== 'stories' && p !== 'p');
     if (parts.length > 0) return parts[0];
@@ -44,19 +44,11 @@ function detectCurrentUsername() {
 
 // Güvenli CSRF Token Alıcı (Çoklu Yöntem)
 function getCSRFToken() {
-    // 1. Cookie
     const match = document.cookie.match(/csrftoken=([^;]+)/);
     if (match && match[1]) return match[1];
 
-    // 2. HTML Meta / Script tag araması
     const html = document.documentElement.innerHTML;
-    let m = html.match(/"csrf_token":"([^"]+)"/);
-    if (m && m[1]) return m[1];
-    
-    m = html.match(/\\"csrf_token\\":\\"([^\\"]+)\\"/);
-    if (m && m[1]) return m[1];
-
-    m = html.match(/"token":"([^"]+)"/);
+    let m = html.match(/"csrf_token":"([^"]+)"/) || html.match(/\\"csrf_token\\":\\"([^\\"]+)\\"/) || html.match(/"token":"([^"]+)"/);
     if (m && m[1]) return m[1];
 
     return '';
@@ -64,15 +56,17 @@ function getCSRFToken() {
 
 const appId = "936619743392459";
 
-// Kullanıcı Sayısal ID'si ve Profil Detayı Çözücü
+// Hedef Kullanıcı Sayısal ID'si ve Profil Detayı Çözücü
 async function resolveProfileInfo(username) {
     let userId = null;
     let stats = { followers: 0, following: 0 };
     const csrfToken = getCSRFToken();
 
-    // 1. Doğrudan web_profile_info API sorgusu
+    console.log(`[InstaTracker] @${username} için ID çözümleniyor...`);
+
+    // 1. web_profile_info API sorgusu
     try {
-        const res = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+        const res = await fetch(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`, {
             headers: {
                 'x-ig-app-id': appId,
                 'x-csrftoken': csrfToken,
@@ -87,7 +81,7 @@ async function resolveProfileInfo(username) {
                 userId = String(data.data.user.id);
                 stats.followers = data.data.user.edge_followed_by?.count || 0;
                 stats.following = data.data.user.edge_follow?.count || 0;
-                console.log(`[InstaTracker] web_profile_info başarılı. ID: ${userId}, Takipçi: ${stats.followers}, Takip: ${stats.following}`);
+                console.log(`[InstaTracker] web_profile_info ile bulundu: ID=${userId}, Takipçi=${stats.followers}, Takip=${stats.following}`);
                 return { userId, stats };
             }
         }
@@ -95,22 +89,37 @@ async function resolveProfileInfo(username) {
         console.warn("[InstaTracker] web_profile_info API hatası:", e);
     }
 
-    // 2. HTML içi Regex Taraması
-    const html = document.documentElement.innerHTML;
-    let match = html.match(/"profilePage_([0-9]+)"/);
-    if (!match) match = html.match(/"user_id":"([0-9]+)"/);
-    if (!match) match = html.match(/"target_id":"([0-9]+)"/);
-    if (!match) match = html.match(/"id":"([0-9]+)"/);
-    
-    // Cookie'deki oturum sahibi kontrolü
-    if (!match && document.cookie.includes("ds_user_id=")) {
-        const dsMatch = document.cookie.match(/ds_user_id=([0-9]+)/);
-        if (dsMatch) match = dsMatch;
+    // 2. topsearch API (Garantili Arama)
+    try {
+        const searchRes = await fetch(`https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(username)}&rank_token=0.8`, {
+            headers: {
+                'x-ig-app-id': appId,
+                'x-csrftoken': csrfToken,
+                'x-requested-with': 'XMLHttpRequest'
+            }
+        });
+        if (searchRes.ok) {
+            const searchData = await searchRes.json();
+            const matched = searchData?.users?.find(u => u?.user?.username?.toLowerCase() === username.toLowerCase());
+            if (matched && matched.user) {
+                userId = String(matched.user.pk || matched.user.id);
+                console.log(`[InstaTracker] topsearch ile ID bulundu: ${userId}`);
+                return { userId, stats };
+            }
+        }
+    } catch(e) {
+        console.warn("[InstaTracker] topsearch API hatası:", e);
     }
 
-    if (match) {
-        userId = match[1];
-        console.log(`[InstaTracker] HTML içi Regex ile ID bulundu: ${userId}`);
+    // 3. Eğer açık olan sayfa aranan kullanıcıya aitse HTML regex kontrolü
+    const currentTabUser = detectCurrentUsername();
+    if (currentTabUser && currentTabUser.toLowerCase() === username.toLowerCase()) {
+        const html = document.documentElement.innerHTML;
+        let match = html.match(/"profilePage_([0-9]+)"/) || html.match(/"user_id":"([0-9]+)"/) || html.match(/"target_id":"([0-9]+)"/);
+        if (match) {
+            userId = match[1];
+            console.log(`[InstaTracker] HTML Regex ile ID bulundu: ${userId}`);
+        }
     }
 
     return { userId, stats };
@@ -196,7 +205,7 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
         }
 
         if (i < usersList.length - 1) {
-            const waitTime = Math.floor(Math.random() * 2500) + 4500; // 4.5 - 7 sn
+            const waitTime = Math.floor(Math.random() * 2500) + 4500;
             await new Promise(r => setTimeout(r, waitTime));
         }
     }
@@ -211,12 +220,12 @@ async function batchUnfollowUsers(usersList, sourceAccount) {
     return { success: true, count: countSuccess };
 }
 
-// API ile Takipçi ve Takip Edilen Listesi Çekme (REST + GraphQL Hibrit)
+// API ile Takipçi ve Takip Edilen Listesi Çekme (REST + GraphQL)
 async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     const username = forceUsername || detectCurrentUsername();
     
     if (!username) {
-        if (!isSilent) showToast("Lütfen bir Instagram profiline gidin.", true);
+        if (!isSilent) showToast("Lütfen taranacak bir hesap seçin veya profil açın.", true);
         return { success: false, error: "no_profile" };
     }
 
@@ -224,7 +233,7 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     const { userId, stats } = await resolveProfileInfo(username);
 
     if (!userId) {
-        if (!isSilent) showToast("Profil ID'si çözümlenemedi. Sayfayı yenileyip tekrar deneyin.", true);
+        if (!isSilent) showToast(`@${username} hesabının ID'si çözümlenemedi. Profil sayfasına gidin.`, true);
         return { success: false, error: "user_id_not_found" };
     }
 
@@ -234,9 +243,9 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
     let hasNextPage = true;
     let pageCount = 0;
 
-    console.log(`[InstaTracker] ${type} listesi çekiliyor... Hedef: @${username} (ID: ${userId})`);
+    console.log(`[InstaTracker] @${username} (ID: ${userId}) için ${type} çekiliyor...`);
 
-    while (hasNextPage && pageCount < 50) { // Güvenlik sınırı: max 50 sayfa
+    while (hasNextPage && pageCount < 60) {
         pageCount++;
         try {
             let url = `https://www.instagram.com/api/v1/friendships/${userId}/${endpoint}/?count=50`;
@@ -259,8 +268,7 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
                     continue; 
                 }
                 
-                // REST API başarısızsa GraphQL ile dene
-                console.warn(`[InstaTracker] REST API ${res.status} döndü. GraphQL deneniyor...`);
+                console.warn(`[InstaTracker] REST API yanıt vermedi (${res.status}). GraphQL deneniyor...`);
                 const gqlUsers = await fetchWithGraphQL(userId, type, csrfToken);
                 if (gqlUsers && gqlUsers.length > 0) {
                     allUsers = gqlUsers;
@@ -282,8 +290,6 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
                     isVerified: !!u.is_verified
                 });
             }
-
-            console.log(`[InstaTracker] Sayfa ${pageCount}: ${list.length} kişi alındı. Toplam: ${allUsers.length}`);
 
             if (!isSilent) {
                 chrome.runtime.sendMessage({
@@ -307,7 +313,7 @@ async function scrapeListAPI(type, isSilent = false, forceUsername = null) {
         }
     }
 
-    console.log(`[InstaTracker] ${type} tamamlandı. Toplam kullanıcı: ${allUsers.length}`);
+    console.log(`[InstaTracker] @${username} ${type} tamamlandı. Toplam: ${allUsers.length}`);
 
     return new Promise((resolve) => {
         chrome.runtime.sendMessage({

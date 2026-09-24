@@ -19,11 +19,14 @@
                     <h1>InstaTracker <span>PRO</span></h1>
                 </div>
             </div>
-            <div class="account-selector-wrapper">
-                <span class="account-badge-icon">👤</span>
+
+            <!-- Hesap Seçici Çubuğu -->
+            <div class="account-selector-card">
+                <span class="acc-icon">👤</span>
                 <select id="account-select" class="account-dropdown">
                     <option value="">Profil Aranıyor...</option>
                 </select>
+                <button id="btn-detect-tab" class="btn-icon-action" title="Açık olan Instagram sekmesini algıla ve ekle">🔄</button>
             </div>
         </header>
 
@@ -69,7 +72,7 @@
         <!-- Manuel Hızlı Analiz Butonu -->
         <section class="controls-card">
             <button id="start-full-analysis" class="btn primary-gradient main-action-btn">
-                <span class="btn-icon">⚡</span> Şimdi Manuel Analiz Yap
+                <span class="btn-icon">⚡</span> <span id="btn-analyze-text">Seçili Hesabı Analiz Et</span>
             </button>
             <div class="status-wrapper">
                 <p id="status-text">Durum: Hazır</p>
@@ -110,8 +113,10 @@
                 <!-- Toplu Güvenli Takipten Çıkma Araç Çubuğu -->
                 <div class="batch-unfollow-bar">
                     <span class="batch-info">🛡️ Güvenli Takipten Çık:</span>
-                    <button id="batch-unfollow-5" class="btn-batch">5 Kişi</button>
-                    <button id="batch-unfollow-10" class="btn-batch">10 Kişi</button>
+                    <div class="batch-buttons">
+                        <button id="batch-unfollow-5" class="btn-batch">5 Kişi</button>
+                        <button id="batch-unfollow-10" class="btn-batch">10 Kişi</button>
+                    </div>
                 </div>
                 
                 <ul id="list-nfb" class="user-list">

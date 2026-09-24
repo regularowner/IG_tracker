@@ -2,7 +2,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- UI Elements ---
     const btnStartFullAnalysis = document.getElementById('start-full-analysis');
+    const btnAnalyzeText = document.getElementById('btn-analyze-text');
     const btnClearData = document.getElementById('clear-data');
+    const btnDetectTab = document.getElementById('btn-detect-tab');
     const statusText = document.getElementById('status-text');
     const progressBar = document.getElementById('progress-bar');
     const accountSelect = document.getElementById('account-select');
@@ -91,32 +93,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Çoklu Hesap Yönetimi (Account Switcher) ---
-    function populateAccountDropdown(selectedAccount) {
+    function populateAccountDropdown(preferredAccount) {
         chrome.storage.local.get(null, (all) => {
             const keys = Object.keys(all).filter(k => k.endsWith('_followerData'));
-            const accounts = keys.map(k => k.replace('_followerData', ''));
+            let accounts = keys.map(k => k.replace('_followerData', ''));
             
             accountSelect.innerHTML = '';
             
-            if (accounts.length === 0) {
-                const opt = document.createElement('option');
-                opt.value = selectedAccount || '';
-                opt.innerText = selectedAccount ? `@${selectedAccount}` : 'Profil Bekleniyor...';
-                accountSelect.appendChild(opt);
-                return;
+            if (preferredAccount && !accounts.includes(preferredAccount)) {
+                accounts.unshift(preferredAccount);
             }
 
-            if (selectedAccount && !accounts.includes(selectedAccount)) {
-                accounts.unshift(selectedAccount);
+            if (accounts.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.innerText = 'Instagram Profilini Açın...';
+                accountSelect.appendChild(opt);
+                return;
             }
 
             accounts.forEach(acc => {
                 const opt = document.createElement('option');
                 opt.value = acc;
                 opt.innerText = `@${acc}`;
-                if (acc === selectedAccount) opt.selected = true;
+                if (acc === (preferredAccount || activeAccount)) {
+                    opt.selected = true;
+                    activeAccount = acc;
+                }
                 accountSelect.appendChild(opt);
             });
+
+            if (activeAccount) {
+                btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
+            }
         });
     }
 
@@ -124,49 +133,63 @@ document.addEventListener('DOMContentLoaded', () => {
         const chosen = e.target.value;
         if (chosen) {
             activeAccount = chosen;
-            statusText.innerText = `Seçilen Hesap: @${activeAccount}`;
+            btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
+            statusText.innerText = `Seçili Hesap: @${activeAccount}`;
             updateUI();
         }
     });
 
-    // Aktif profili belirle
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        let detected = null;
-        if (tabs.length > 0 && tabs[0].url) {
-            let url = tabs[0].url;
-            if (url.includes("instagram.com")) {
-                try {
-                    const urlObj = new URL(url);
-                    const parts = urlObj.pathname.split('/').filter(p => p);
-                    const ignoredPaths = ['explore', 'reels', 'direct', 'stories', 'p'];
-                    if (parts.length > 0 && !ignoredPaths.includes(parts[0])) {
-                        detected = parts[0];
-                    }
-                } catch(e) {}
-            }
-        }
-        
-        if (detected) {
-            activeAccount = detected;
-            populateAccountDropdown(activeAccount);
-            statusText.innerText = `Hesap: @${activeAccount}`;
-            updateUI();
-        } else {
-            chrome.storage.local.get(null, (all) => {
-                const keys = Object.keys(all).filter(k => k.endsWith('_followerData'));
-                if (keys.length > 0) {
-                    activeAccount = keys[0].replace('_followerData', '');
-                    populateAccountDropdown(activeAccount);
-                    statusText.innerText = `Kayıtlı Profil: @${activeAccount}`;
-                    updateUI();
-                } else {
-                    populateAccountDropdown(null);
-                    statusText.innerText = `Instagram'da profilinize gidin.`;
-                    statusText.style.color = "var(--danger)";
-                }
-            });
-        }
+    // Aktif Sekmeyi Yeniden Algıla Butonu
+    btnDetectTab.addEventListener('click', () => {
+        detectActiveTabAccount(true);
     });
+
+    function detectActiveTabAccount(notifyUser = false) {
+        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+            let detected = null;
+            if (tabs.length > 0 && tabs[0].url) {
+                let url = tabs[0].url;
+                if (url.includes("instagram.com")) {
+                    try {
+                        const urlObj = new URL(url);
+                        const parts = urlObj.pathname.split('/').filter(p => p);
+                        const ignoredPaths = ['explore', 'reels', 'direct', 'stories', 'p'];
+                        if (parts.length > 0 && !ignoredPaths.includes(parts[0])) {
+                            detected = parts[0];
+                        }
+                    } catch(e) {}
+                }
+            }
+            
+            if (detected) {
+                activeAccount = detected;
+                populateAccountDropdown(activeAccount);
+                btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
+                statusText.innerText = `Aktif Sekme: @${activeAccount}`;
+                statusText.style.color = "var(--success)";
+                if (notifyUser) alert(`@${detected} profili başarıyla seçildi.`);
+                updateUI();
+            } else {
+                chrome.storage.local.get(null, (all) => {
+                    const keys = Object.keys(all).filter(k => k.endsWith('_followerData'));
+                    if (keys.length > 0) {
+                        activeAccount = keys[0].replace('_followerData', '');
+                        populateAccountDropdown(activeAccount);
+                        btnAnalyzeText.innerText = `@${activeAccount} Analizini Başlat`;
+                        statusText.innerText = `Kayıtlı Profil: @${activeAccount}`;
+                        updateUI();
+                    } else {
+                        populateAccountDropdown(null);
+                        statusText.innerText = `Lütfen Instagram'da bir profil açın.`;
+                        statusText.style.color = "var(--danger)";
+                    }
+                });
+            }
+        });
+    }
+
+    // İlk açılışta algıla
+    detectActiveTabAccount(false);
 
     // Tab Geçişleri
     tabBtns.forEach(btn => {
@@ -300,12 +323,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="user-info">
                     <div class="username-row">
-                        <a href="${user.url || `https://instagram.com/${user.username}`}" target="_blank" class="username">${user.username}</a>
+                        <a href="${user.url || `https://instagram.com/${user.username}`}" target="_blank" class="username" title="@${user.username}">${user.username}</a>
                         ${isVerified ? '<span class="verified-icon" title="Onaylı">✓</span>' : ''}
                         ${extraDateTag}
                     </div>
                     <div class="display-name">
-                        <span class="name-text">${user.displayName || user.username}</span>
+                        <span class="name-text" title="${user.displayName || user.username}">${user.displayName || user.username}</span>
                         ${isPrivate ? '<span class="private-tag">🔒 Gizli</span>' : ''}
                     </div>
                 </div>
@@ -407,7 +430,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateUI() {
-        if (!activeAccount) return;
+        if (!activeAccount) {
+            statFollowers.innerText = '0';
+            statFollowing.innerText = '0';
+            statNotFollowing.innerText = '0';
+            countNFB.innerText = '0';
+            tabCountNFB.innerText = '0';
+            countLF.innerText = '0';
+            tabCountLF.innerText = '0';
+            renderUserList(listNFB, [], "Lütfen bir profil seçin.");
+            renderUserList(listLF, [], "Lütfen bir profil seçin.");
+            return;
+        }
 
         const kF = `${activeAccount}_followerData`;
         const kFl = `${activeAccount}_followingData`;
@@ -485,10 +519,10 @@ document.addEventListener('DOMContentLoaded', () => {
     btnBatch5.addEventListener('click', () => triggerBatchUnfollow(5));
     btnBatch10.addEventListener('click', () => triggerBatchUnfollow(10));
 
-    // Manuel Analiz Başlat
+    // Manuel Analiz Başlat (Seçili Hesabı Hedef Alır)
     btnStartFullAnalysis.addEventListener('click', () => {
         if (!activeAccount) {
-            statusText.innerText = "Lütfen önce Instagram'da bir profile gidin.";
+            statusText.innerText = "Lütfen taranacak bir hesap seçin.";
             statusText.style.color = "var(--danger)";
             return;
         }
@@ -497,31 +531,32 @@ document.addEventListener('DOMContentLoaded', () => {
         btnStartFullAnalysis.classList.add('loading');
         btnStartFullAnalysis.innerHTML = `<span class="spinner"></span> Analiz Yapılıyor...`;
         
-        statusText.innerText = `Takipçiler taranıyor...`;
+        statusText.innerText = `@${activeAccount} takipçileri taranıyor...`;
         statusText.style.color = "var(--text-main)";
         progressBar.style.width = "20%";
 
         chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
             let activeTab = tabs[0];
-            if (activeTab && activeTab.url && activeTab.url.includes("instagram.com")) {
+            
+            const runScrapeOnTab = (tabId) => {
                 chrome.scripting.executeScript({
-                    target: {tabId: activeTab.id},
+                    target: {tabId: tabId},
                     files: ['src/content/content.js']
                 }, () => {
-                    chrome.tabs.sendMessage(activeTab.id, {
+                    chrome.tabs.sendMessage(tabId, {
                         action: "startFullAnalysis", 
                         username: activeAccount
                     }, function(response) {
                         btnStartFullAnalysis.disabled = false;
                         btnStartFullAnalysis.classList.remove('loading');
-                        btnStartFullAnalysis.innerHTML = `<span class="btn-icon">⚡</span> Şimdi Manuel Analiz Yap`;
+                        btnStartFullAnalysis.innerHTML = `<span class="btn-icon">⚡</span> <span id="btn-analyze-text">@${activeAccount} Analizini Başlat</span>`;
                         
                         if (chrome.runtime.lastError || !response || !response.success) {
                             statusText.innerText = `Bağlantı Hatası: Sekmeyi yenileyin.`;
                             statusText.style.color = "var(--danger)";
                             progressBar.style.width = "0%";
                         } else {
-                            statusText.innerText = `✅ Analiz Başarıyla Tamamlandı!`;
+                            statusText.innerText = `✅ @${activeAccount} Analizi Başarıyla Tamamlandı!`;
                             statusText.style.color = "var(--success)";
                             progressBar.style.width = "100%";
                             populateAccountDropdown(activeAccount);
@@ -529,12 +564,22 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     });
                 });
+            };
+
+            if (activeTab && activeTab.url && activeTab.url.includes("instagram.com")) {
+                runScrapeOnTab(activeTab.id);
             } else {
-                btnStartFullAnalysis.disabled = false;
-                btnStartFullAnalysis.classList.remove('loading');
-                btnStartFullAnalysis.innerHTML = `<span class="btn-icon">⚡</span> Şimdi Manuel Analiz Yap`;
-                statusText.innerText = "Lütfen Instagram sekmesinde olun.";
-                statusText.style.color = "var(--danger)";
+                chrome.tabs.query({url: "*://*.instagram.com/*"}, (igTabs) => {
+                    if (igTabs.length > 0) {
+                        runScrapeOnTab(igTabs[0].id);
+                    } else {
+                        btnStartFullAnalysis.disabled = false;
+                        btnStartFullAnalysis.classList.remove('loading');
+                        btnStartFullAnalysis.innerHTML = `<span class="btn-icon">⚡</span> <span id="btn-analyze-text">@${activeAccount} Analizini Başlat</span>`;
+                        statusText.innerText = "Lütfen açık bir Instagram sekmesi bulundurun.";
+                        statusText.style.color = "var(--danger)";
+                    }
+                });
             }
         });
     });
